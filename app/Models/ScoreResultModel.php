@@ -60,4 +60,22 @@ class ScoreResultModel extends Model
 
         return $data;
     }
+
+    public function applyPvResult(int $subId, int $pvScore): void
+    {
+        $existing = $this->where('sub_id', $subId)->first();
+        if (! $existing) {
+            return;
+        }
+
+        $pvResult = round($pvScore * 0.15, 2);
+        $totalScore = $existing['ipk_result'] + $existing['pres_result'] + $existing['skpi_result']
+            + $existing['org_result'] + $existing['bah_result'] + $pvResult;
+
+        $this->update($existing['result_id'], [
+            'pv_result'   => $pvResult,
+            'total_score' => $totalScore,
+            'status'      => 'pending_review',
+        ]);
+    }
 }

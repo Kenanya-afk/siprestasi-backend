@@ -20,7 +20,7 @@ class SubmissionModel extends Model
     public function findActiveByUser(int $userId): ?array
     {
         return $this->where('user_id', $userId)
-                    ->whereIn('status', ['draft', 'submitted', 'pending_reviewed', 'ranked'])
+                    ->whereIn('status', ['draft', 'submitted', 'pending_reviewed', 'top3', 'ranked'])
                     ->first();
     }
 }

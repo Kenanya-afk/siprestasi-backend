@@ -17,3 +17,9 @@ $routes->post('pengajuan/submit', 'PengajuanController::submit', ['filter' => 'a
 $routes->get('pengajuan/ranking', 'PengajuanController::ranking', ['filter' => 'auth:admin,superadmin']);
 $routes->post('periode', 'PeriodeController::create', ['filter' => 'auth:admin,superadmin']);
 $routes->get('periode/current', 'PeriodeController::current', ['filter' => 'auth']);
+$routes->put('pengajuan/(:num)/lecturer-reviewers', 'PengajuanController::setLecturerReviewers/$1', ['filter' => 'auth:admin,superadmin']);
+$routes->post('pv-questionnaire', 'PvQuestionnaireController::create', ['filter' => 'auth:admin,superadmin']);
+$routes->post('pv-questionnaire/(:num)/questions', 'PvQuestionnaireController::addQuestion/$1', ['filter' => 'auth:admin,superadmin']);
+$routes->get('pv-questionnaire/active', 'PvQuestionnaireController::active', ['filter' => 'auth']);
+$routes->get('pv-respond/(:any)', 'PvResponseController::form/$1');
+$routes->post('pv-respond/(:any)', 'PvResponseController::submit/$1');

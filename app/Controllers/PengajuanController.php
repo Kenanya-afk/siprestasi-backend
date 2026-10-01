@@ -13,6 +13,8 @@ use App\Models\OrganisasiModel;
 use App\Models\LogModel;
 use App\Models\ScoreResultModel;
 use App\Models\PeriodeModel;
+use App\Models\PvQuestionnaireModel;
+use App\Models\PvResponseModel;
 
 class PengajuanController extends BaseController
 {
@@ -254,10 +256,10 @@ class PengajuanController extends BaseController
             ]);
         }
 
-        if ($submission['status'] !== 'draft') {
+        if ($submission['status'] !== 'top3') {
             return $this->response->setStatusCode(403)->setJSON([
                 'success' => false,
-                'message' => 'Pengajuan sudah dikirim, data tidak bisa diubah.',
+                'message' => 'Pengajuan belum masuk Top 3.',
             ]);
         }
 
@@ -291,6 +293,8 @@ class PengajuanController extends BaseController
             'peer_reviewer_2' => $input['peer_reviewer_2'],
             'peer_reviewer_3' => $input['peer_reviewer_3'],
         ]);
+        
+        $this->dispatchQuestionnairesIfReady($submission['sub_id']);
 
         return $this->response->setJSON([
             'success' => true,
@@ -298,6 +302,75 @@ class PengajuanController extends BaseController
         ]);
     }
 
+        /**
+     * PUT /pengajuan/{subId}/lecturer-reviewers
+     * Body (JSON): { "lecturer_reviewer_1": 5, "lecturer_reviewer_2": 8 }
+     * Route dipasang dengan filter auth:admin,superadmin
+     * Dipanggil setelah mahasiswa ini ditetapkan Top 3.
+     */
+    public function setLecturerReviewers($subId)
+    {
+        $submissionModel = new SubmissionModel();
+        $submission      = $submissionModel->find($subId);
+
+        if (! $submission) {
+            return $this->response->setStatusCode(404)->setJSON([
+                'success' => false,
+                'message' => 'Pengajuan tidak ditemukan.',
+            ]);
+        }
+
+        if ($submission['status'] !== 'top3') {
+            return $this->response->setStatusCode(409)->setJSON([
+                'success' => false,
+                'message' => 'Pengajuan belum masuk Top 3.',
+            ]);
+        }
+
+        $input = $this->request->getJSON(true) ?? [];
+
+        $rules = [
+            'lecturer_reviewer_1' => 'required|is_natural_no_zero',
+            'lecturer_reviewer_2' => 'required|is_natural_no_zero|differs[lecturer_reviewer_1]',
+        ];
+
+        if (! $this->validateData($input, $rules)) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'success' => false,
+                'errors'  => $this->validator->getErrors(),
+            ]);
+        }
+
+        $userModel = new UserModel();
+        $kaprodi   = $userModel->find($input['lecturer_reviewer_1']);
+        $dosen2    = $userModel->find($input['lecturer_reviewer_2']);
+
+        if (! $kaprodi || $kaprodi['role'] !== 'dosen' || ! $kaprodi['is_kaprodi']) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'success' => false,
+                'errors'  => ['lecturer_reviewer_1' => 'User ini bukan Kaprodi.'],
+            ]);
+        }
+
+        if (! $dosen2 || $dosen2['role'] !== 'dosen') {
+            return $this->response->setStatusCode(422)->setJSON([
+                'success' => false,
+                'errors'  => ['lecturer_reviewer_2' => 'User ini bukan dosen.'],
+            ]);
+        }
+
+        $submissionModel->update($subId, [
+            'lecturer_reviewer_1' => $input['lecturer_reviewer_1'],
+            'lecturer_reviewer_2' => $input['lecturer_reviewer_2'],
+        ]);
+
+        $this->dispatchQuestionnairesIfReady($subId);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => 'Dosen penilai berhasil ditetapkan.',
+        ]);
+    }
     /**
      * POST /pengajuan/submit
      */
@@ -394,5 +467,52 @@ class PengajuanController extends BaseController
             'success' => true,
             'data'    => $rows,
         ]);
+    }
+
+    private function dispatchQuestionnairesIfReady(int $subId): void
+    {
+        $submissionModel = new SubmissionModel();
+        $submission      = $submissionModel->find($subId);
+
+        $reviewersLengkap = ! empty($submission['peer_reviewer_1'])
+            && ! empty($submission['peer_reviewer_2'])
+            && ! empty($submission['peer_reviewer_3'])
+            && ! empty($submission['lecturer_reviewer_1'])
+            && ! empty($submission['lecturer_reviewer_2']);
+
+        if (! $reviewersLengkap || $submission['status'] !== 'top3') {
+            return; // masih nunggu salah satu pihak (mahasiswa/admin) lengkapi datanya
+        }
+
+        $questionnaire = (new PvQuestionnaireModel())->getActive();
+        if (! $questionnaire) {
+            return; // TODO: idealnya kasih notifikasi ke admin, kuesioner belum disiapkan
+        }
+
+        $userModel      = new UserModel();
+        $responseModel  = new PvResponseModel();
+        $kaprodi        = $userModel->find($submission['lecturer_reviewer_1']);
+        $dosenLain      = $userModel->find($submission['lecturer_reviewer_2']);
+
+        $evaluators = [
+            ['reviewer' => $submission['peer_reviewer_1'], 'role' => 'sejawat'],
+            ['reviewer' => $submission['peer_reviewer_2'], 'role' => 'sejawat'],
+            ['reviewer' => $submission['peer_reviewer_3'], 'role' => 'sejawat'],
+            ['reviewer' => $kaprodi['email'] ?? '', 'role' => 'dosen'],
+            ['reviewer' => $dosenLain['email'] ?? '', 'role' => 'dosen'],
+        ];
+
+        foreach ($evaluators as $e) {
+            $responseModel->insert([
+                'sub_id'      => $subId,
+                'quiz_id'     => $questionnaire['quiz_id'],
+                'reviewer'    => $e['reviewer'],
+                'role'        => $e['role'],
+                'status'      => 'pending',
+                'token'       => bin2hex(random_bytes(32)),
+            ]);
+        }
+
+        $submissionModel->update($subId, ['status' => 'pending_reviewed']);
     }
 }
