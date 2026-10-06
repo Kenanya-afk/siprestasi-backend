@@ -7,7 +7,7 @@ use CodeIgniter\Model;
 class PrestasiModel extends Model
 {
     protected $table         = 'prestasi';
-    protected $primaryKey = 'prestasi_id';
+    protected $primaryKey = 'pres_id';
     protected $allowedFields = ['sub_id', 'pres_cat', 'pres_score', 'pres_file', 'pres_status'];
 
     public const SCORES = [

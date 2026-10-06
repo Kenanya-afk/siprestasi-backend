@@ -3,6 +3,10 @@
 namespace App\Models;
 
 use CodeIgniter\Model;
+use App\Models\PrestasiModel;
+use App\Models\OrganisasiModel;
+use App\Models\BahasaModel;
+use App\Models\ScoreResultModel;
 
 class PeriodeModel extends Model
 {
@@ -40,6 +44,35 @@ class PeriodeModel extends Model
 
         $db = \Config\Database::connect();
 
+                // Finalisasi: kategori yang masih pending/revisi saat periode ditutup -> ditolak permanen
+        $kategoriMap = [
+            'prestasi'   => ['model' => PrestasiModel::class, 'prefix' => 'pres'],
+            'organisasi' => ['model' => OrganisasiModel::class, 'prefix' => 'org'],
+            'bahasa'     => ['model' => BahasaModel::class, 'prefix' => 'bah'],
+        ];
+
+        $subIdsTerdampak = [];
+
+        foreach ($kategoriMap as $cfg) {
+            $model  = new $cfg['model']();
+            $prefix = $cfg['prefix'];
+
+            $belumFinal = $model->whereIn($prefix . '_status', ['pending', 'revisi'])->findAll();
+
+            foreach ($belumFinal as $doc) {
+                $model->update($doc[$prefix . '_id'], [
+                    $prefix . '_status' => 'ditolak',
+                    $prefix . '_score'  => 0,
+                ]);
+                $subIdsTerdampak[] = $doc['sub_id'];
+            }
+        }
+
+        $scoreResultModel = new ScoreResultModel();
+        foreach (array_unique($subIdsTerdampak) as $subId) {
+            $scoreResultModel->calculateAllResults((int) $subId);
+        }
+        
         $angkatanList = $db->table('users')
             ->distinct()
             ->select('year')

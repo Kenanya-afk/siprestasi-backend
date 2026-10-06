@@ -81,37 +81,87 @@ class AuthController extends BaseController
 
             $response = $client->post(env('aiService.baseUrl') . '/verify-krs', [
                 'headers' => [
-                    'x-internal-key' => env('aiService.internalKey'),
-                ],
-                'multipart' => [
-                    'file' => new \CURLFile($pathFileKrs, mime_content_type($pathFileKrs), $namaFileBaru),
-                    'nama' => $this->request->getPost('nama'),
-                    'nim'  => $this->request->getPost('nim'),
-                ],
-                'timeout' => 15, // detik
-            ]);
+                'x-internal-key' => env('aiService.internalKey'),
+            ],
+            'multipart' => [
+            'file' => new \CURLFile(
+            $pathFileKrs,
+            mime_content_type($pathFileKrs),
+            $namaFileBaru
+        ),
+                'nama' => $this->request->getPost('nama'),
+                'nim'  => $this->request->getPost('nim'),
+         ],
+        'timeout' => 15,
+]);
 
-            $hasilAi = json_decode($response->getBody(), true);
+    $bodyAi = (string) $response->getBody();
 
-            if (isset($hasilAi['is_prodi_si'])) {
-                $statusVerifikasi = $hasilAi['is_prodi_si'] ? 'terverifikasi' : 'ditolak';
-            }
-        } catch (\Exception $e) {
-            // AI service tidak bisa dihubungi (mati/timeout/dll) -- log errornya,
-            // tapi jangan gagalkan proses register, biarkan tetap 'pending'
-            log_message('error', 'Gagal menghubungi AI service: ' . $e->getMessage());
+    log_message('error', 'RESPON AI MENTAH: ' . $bodyAi);
+
+    $hasilAi = json_decode($bodyAi, true);
+
+    log_message('error', 'HASIL AI DECODE: ' . print_r($hasilAi, true));
+
+    $hasilAi = json_decode($response->getBody(), true);
+
+    if (!isset($hasilAi['is_valid'])) {
+    if (file_exists($pathFileKrs)) {
+        unlink($pathFileKrs);
+    }
+
+    return $this->response->setStatusCode(503)->setJSON([
+        'success' => false,
+        'message' => 'Hasil verifikasi KRS tidak valid. Silakan coba lagi.',
+    ]);
+}
+
+if (!$hasilAi['is_valid']) {
+    if (file_exists($pathFileKrs)) {
+        unlink($pathFileKrs);
+    }
+
+    return $this->response->setStatusCode(422)->setJSON([
+        'success' => false,
+        'message' => 'Registrasi ditolak. KRS tidak sesuai dengan ketentuan Program Studi Sistem Informasi.',
+    ]);
+}
+
+    } catch (\Exception $e) {
+
+        if (file_exists($pathFileKrs)) {
+            unlink($pathFileKrs);
         }
+
+        log_message(
+            'error',
+            'Gagal menghubungi AI service: ' . $e->getMessage()
+        );
+
+        return $this->response->setStatusCode(503)->setJSON([
+            'success' => false,
+            'message' => 'Verifikasi KRS sedang tidak tersedia. Silakan coba lagi.',
+        ]);
+    }
+
+    // Ambil 2 digit pertama NIM sebagai angkatan, gabung jadi tahun 4 digit (24 -> 2024)
+    $nimUser = $this->request->getPost('nim');
+    $angkatan = '20' . substr($nimUser, 0, 2);
 
         $data = [
             'name'              => $this->request->getPost('nama'),
             'email'             => $this->request->getPost('email'),
-            'password'          => password_hash($this->request->getPost('password'), PASSWORD_BCRYPT),
+            'password'          => password_hash(
+                                    $this->request->getPost('password'),
+                                    PASSWORD_BCRYPT
+                                    ),
             'induk'             => $this->request->getPost('nim'),
             'contact'           => $this->request->getPost('no_telp'),
             'krs_path'          => $namaFileBaru,
-            'status_verifikasi' => $statusVerifikasi,
+            'status_verifikasi' => 'terverifikasi',
             'role'              => 'mahasiswa',
-        ];
+            'year'              => $angkatan,
+];
 
         $this->userModel->insert($data);
 

@@ -88,7 +88,7 @@ class PvResponseController extends BaseController
         $weightedSum  = 0;
 
         foreach ($answers as $a) {
-            $questId = $a['quest_id'] ?? null;
+            $questId = isset($a['quest_id']) ? (int) $a['quest_id'] : null;
             $score   = $a['score'] ?? null;
 
             if (! in_array($questId, $questIds, true) || ! is_numeric($score) || $score < 1 || $score > 5) {

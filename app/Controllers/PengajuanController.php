@@ -134,6 +134,7 @@ class PengajuanController extends BaseController
                 'status'          => $submission['status'],
                 'peer_reviewer_1' => $submission['peer_reviewer_1'],
                 'peer_reviewer_2' => $submission['peer_reviewer_2'],
+                'peer_reviewer_3' => $submission['peer_reviewer_3'],
                 'ipk'             => $db->table('ipk')->where('sub_id', $subId)->get()->getRowArray(),
                 'skpi'            => $db->table('skpi')->where('sub_id', $subId)->get()->getRowArray(),
                 'prestasi'        => $db->table('prestasi')->where('sub_id', $subId)->get()->getRowArray(),
@@ -178,10 +179,13 @@ class PengajuanController extends BaseController
             ]);
         }
 
-        if ($submission['status'] !== 'draft') {
+        $existingCheck = (new $modelClass())->where('sub_id', $submission['sub_id'])->first();
+        $sedangRevisi  = $existingCheck && $existingCheck[$prefix . '_status'] === 'revisi';
+
+        if ($submission['status'] !== 'draft' && ! $sedangRevisi) {
             return $this->response->setStatusCode(403)->setJSON([
                 'success' => false,
-                'message' => 'Pengajuan sudah dikirim, data tidak bisa diubah.',
+                'message' => 'Pengajuan sudah dikirim dan dokumen ini tidak dalam status revisi.',
             ]);
         }
 
@@ -211,12 +215,12 @@ class PengajuanController extends BaseController
         $data = [
             'sub_id'             => $submission['sub_id'],
             $catField            => $kategori,
-            $prefix . '_score'   => $score,
+            $prefix . '_score'   => 0, // default 0, nanti dihitung di ScoreResultModel
             $fileField           => $newName,
             $prefix . '_status'  => 'pending',
         ];
 
-        $existing = $model->where('sub_id', $submission['sub_id'])->first();
+                $existing = $model->where('sub_id', $submission['sub_id'])->first();
 
         if ($existing) {
             @unlink(WRITEPATH . 'uploads/' . $folder . '/' . $existing[$fileField]);
@@ -225,13 +229,18 @@ class PengajuanController extends BaseController
             $model->insert($data);
         }
 
+        $user = (new UserModel())->find($userId);
+        $this->validateDocumentWithAi($modelClass, $prefix, $folder, $submission['sub_id'], $kategori, $newName, $user['name'] ?? '');
+
+        $docTerbaru = $model->where('sub_id', $submission['sub_id'])->first();
+
         return $this->response->setStatusCode($existing ? 200 : 201)->setJSON([
             'success' => true,
-            'message' => $label . ' berhasil disimpan, menunggu verifikasi.',
+            'message' => $label . ' berhasil disimpan dan divalidasi.',
             'data'    => [
-                $catField           => $kategori,
-                $prefix . '_score'  => $score,
-                $prefix . '_status' => 'pending',
+                $catField           => $docTerbaru[$catField],
+                $prefix . '_score'  => $docTerbaru[$prefix . '_score'],
+                $prefix . '_status' => $docTerbaru[$prefix . '_status'],
             ],
         ]);
     }
@@ -300,6 +309,27 @@ class PengajuanController extends BaseController
             'success' => true,
             'message' => 'Tiga rekan sejawat berhasil disimpan.',
         ]);
+    }
+
+    private function getValidationIndicator(int $subId): string
+    {
+        $db = \Config\Database::connect();
+
+        $statuses = [];
+        foreach (['prestasi' => 'pres_status', 'organisasi' => 'org_status', 'bahasa' => 'bah_status'] as $table => $col) {
+            $row = $db->table($table)->select($col)->where('sub_id', $subId)->get()->getRowArray();
+            if ($row) {
+                $statuses[] = $row[$col];
+            }
+        }
+
+        if (in_array('ditolak', $statuses, true)) {
+            return 'red';
+        }
+        if (in_array('pending', $statuses, true) || in_array('revisi', $statuses, true)) {
+            return 'yellow';
+        }
+        return 'green';
     }
 
         /**
@@ -416,7 +446,7 @@ class PengajuanController extends BaseController
             'submitted_at' => date('Y-m-d H:i:s'),
         ]);
         (new LogModel())->recordLog($submission['sub_id'], $userId, 'submitted');
-
+        
         (new ScoreResultModel())->calculateAllResults($submission['sub_id']);
 
         $db->transComplete();
@@ -454,7 +484,7 @@ class PengajuanController extends BaseController
 
         $db = \Config\Database::connect();
 
-        $rows = $db->table('score_result sr')
+                $rows = $db->table('score_result sr')
             ->select('sr.sub_id, sr.total_score, sr.status, u.name, u.induk, u.year')
             ->join('submission s', 's.sub_id = sr.sub_id')
             ->join('users u', 'u.user_id = s.user_id')
@@ -462,6 +492,11 @@ class PengajuanController extends BaseController
             ->orderBy('sr.total_score', 'DESC')
             ->get()
             ->getResultArray();
+
+        foreach ($rows as &$row) {
+            $row['indicator'] = $this->getValidationIndicator((int) $row['sub_id']);
+        }
+        unset($row); // biar aman, hapus referensi setelah loop
 
         return $this->response->setJSON([
             'success' => true,
@@ -515,4 +550,76 @@ class PengajuanController extends BaseController
 
         $submissionModel->update($subId, ['status' => 'pending_reviewed']);
     }
+
+    private function validateDocumentWithAi(string $modelClass, string $prefix, string $folder, int $subId, string $kategori, string $fileName, string $namaMahasiswa): void
+    {
+        $filePath = WRITEPATH . 'uploads/' . $folder . '/' . $fileName;
+        if (! is_file($filePath)) {
+            return;
+        }
+
+        $verdict = 'ragu';
+        try {
+            $url = env('aiService.baseUrl') . '/verify-certificate';
+            
+            // Siapkan data multipart menggunakan CURLFile asli PHP
+            $postData = [
+                'file'     => new \CURLFile($filePath, mime_content_type($filePath) ?: 'application/octet-stream', $fileName),
+                'nama'     => $namaMahasiswa,
+                'kategori' => $kategori,
+                'tipe'     => $folder,
+            ];
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'x-internal-key: ' . env('aiService.internalKey')
+            ]);
+
+            $responseBody = curl_exec($ch);
+            $httpCode     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError    = curl_error($ch);
+            curl_close($ch);
+
+            if ($curlError) {
+                log_message('error', 'Gagal menghubungi AI service (cURL error): ' . $curlError);
+            } elseif ($httpCode !== 200) {
+                log_message('error', 'AI Service Error Response (HTTP ' . $httpCode . '): ' . $responseBody);
+            } else {
+                $hasil   = json_decode($responseBody, true);
+                $verdict = $hasil['verdict'] ?? 'ragu';
+            }
+        } catch (\Exception $e) {
+            log_message('error', 'Gagal menghubungi AI service (Exception): ' . $e->getMessage());
+        }
+
+        $model = new $modelClass();
+        $doc   = $model->where('sub_id', $subId)->first();
+        if (! $doc) {
+            return;
+        }
+
+        if ($verdict === 'sesuai') {
+            $model->update(
+                $doc[$prefix . '_id'], 
+                [
+                    $prefix . '_status' => 'verified',
+                    $prefix . '_score'  => $modelClass::SCORES[$kategori] ?? 0,
+                ]
+            );
+        } elseif ($verdict === 'tidak_sesuai') {
+            $model->update($doc[$prefix . '_id'], [
+                $prefix . '_status' => 'revisi',
+                $prefix . '_score'  => 0,
+            ]);
+        }
+        // 'ragu' -> tetap pending, skor tetap 0, nunggu admin
+
+        (new ScoreResultModel())->calculateAllResults($subId);
+    }
+
 }

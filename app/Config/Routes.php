@@ -23,3 +23,4 @@ $routes->post('pv-questionnaire/(:num)/questions', 'PvQuestionnaireController::a
 $routes->get('pv-questionnaire/active', 'PvQuestionnaireController::active', ['filter' => 'auth']);
 $routes->get('pv-respond/(:any)', 'PvResponseController::form/$1');
 $routes->post('pv-respond/(:any)', 'PvResponseController::submit/$1');
+$routes->put('pengajuan/(:num)/validasi/(:segment)', 'ValidasiController::updateStatus/$1/$2', ['filter' => 'auth:admin,superadmin']);
