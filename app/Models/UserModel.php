@@ -11,6 +11,7 @@ class UserModel extends Model
     protected $useAutoIncrement = true;
     protected $returnType       = 'array';
     protected $useSoftDeletes   = false;
+    protected $deletedField     = 'deleted_at';
 
     protected $allowedFields = [
         'name',
@@ -23,7 +24,14 @@ class UserModel extends Model
         'krs_path',
         'status_verifikasi',
         'role',
+        'is_kaprodi',
         'is_active',
+        'deletded_at',
+    ];
+
+    protected array $casts = [
+        'is_active' => 'boolean',
+        'is_kaprodi' => 'boolean',
     ];
 
     protected $useTimestamps = true;

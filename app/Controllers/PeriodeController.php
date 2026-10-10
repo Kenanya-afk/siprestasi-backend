@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\PeriodeModel;
+use App\Models\LogModel;
 
 class PeriodeController extends BaseController
 {
@@ -42,6 +43,11 @@ class PeriodeController extends BaseController
             'is_closed'       => false,
             'created_at'      => date('Y-m-d H:i:s'),
         ]);
+
+        (new LogModel())->recordSystemLog(
+            (int) session()->get('user_id'),
+            "Buat periode pendaftaran {$input['tahun_ajaran']} ({$input['tanggal_mulai']} s/d {$input['tanggal_selesai']})"
+        );
 
         return $this->response->setStatusCode(201)->setJSON([
             'success' => true,

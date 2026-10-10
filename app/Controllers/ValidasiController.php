@@ -6,6 +6,7 @@ use App\Models\BahasaModel;
 use App\Models\OrganisasiModel;
 use App\Models\PrestasiModel;
 use App\Models\ScoreResultModel;
+use App\Models\LogModel;
 
 class ValidasiController extends BaseController
 {
@@ -77,6 +78,12 @@ class ValidasiController extends BaseController
 
         // Status kategori berubah -> hitung ulang total_score dari skor terbaru
         (new ScoreResultModel())->calculateAllResults((int) $subId);
+
+        (new LogModel())->recordLog(
+            (int) $subId,
+            (int) session()->get('user_id'),
+            "Validasi {$kategori}: {$input['status']}"
+        );
 
         return $this->response->setJSON([
             'success' => true,
