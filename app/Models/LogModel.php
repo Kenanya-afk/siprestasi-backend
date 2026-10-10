@@ -18,4 +18,14 @@ class LogModel extends Model {
             'logged_at' => date('Y-m-d H:i:s'),
         ]);
     }
+
+    public function recordSystemLog(int $userId, string $action): bool
+    {
+        return (bool) $this->insert([
+            'sub_id'  => null,
+            'user_id' => $userId,
+            'action'  => $action,
+            'logged_at' => date('Y-m-d H:i:s') 
+        ]);
+    }
 }

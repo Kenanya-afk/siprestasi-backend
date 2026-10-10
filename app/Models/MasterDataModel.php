@@ -10,11 +10,16 @@ class MasterDataModel extends Model
     protected $primaryKey    = 'master_id';
     protected $allowedFields = ['period', 'induk', 'name', 'ipk', 'skpi', 'imported_at'];
 
-    // Data terbaru untuk satu NIM (kalau ada beberapa periode)
-    public function findLatestByInduk(string $induk): ?array
+    // Data master untuk satu NIM pada satu periode
+    public function findByIndukAndPeriod(string $induk, string $period): ?array
     {
         return $this->where('induk', $induk)
-                    ->orderBy('period', 'DESC')
+                    ->where('period', $period)
                     ->first();
+    }
+
+    public function existsByInduk(string $induk): ?array
+    {
+        return $this -> where ('induk', $induk)->first();
     }
 }
