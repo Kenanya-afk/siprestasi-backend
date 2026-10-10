@@ -14,7 +14,8 @@ class PvResponseModel extends Model {
         'role',
         'status',
         'total_score',
-        'token'
+        'token',
+        'email_sent_at'
     ];
 
     public function findByToken(string $token): ?array

@@ -15,6 +15,7 @@ use App\Models\ScoreResultModel;
 use App\Models\PeriodeModel;
 use App\Models\PvQuestionnaireModel;
 use App\Models\PvResponseModel;
+use App\Libraries\PvMailer;
 
 class PengajuanController extends BaseController
 {
@@ -54,13 +55,14 @@ class PengajuanController extends BaseController
             ]);
         }
 
-        $master = (new MasterDataModel())->findLatestByInduk($user['induk']);
-        if (! $master) {
-            return $this->response->setStatusCode(404)->setJSON([
-                'success' => false,
-                'message' => 'Data IPK/SKPI kamu belum tersedia. Hubungi Kaprodi.',
-            ]);
-        }
+        $master = (new MasterDataModel())->findByIndukAndPeriod($user['induk'], $currentPeriode['tahun_ajaran']);
+
+    if (! $master) {
+        return $this->response->setStatusCode(404)->setJSON([
+            'status'  => 'error',
+            'message' => 'Data akademik belum tersedia untuk periode ini. Hubungi admin.',
+        ]);
+    }
 
         $ipkModel  = new IpkModel();
         $skpiModel = new SkpiModel();
@@ -484,7 +486,8 @@ class PengajuanController extends BaseController
 
         $db = \Config\Database::connect();
 
-                $rows = $db->table('score_result sr')
+        $rows = $db
+            ->table('score_result sr')
             ->select('sr.sub_id, sr.total_score, sr.status, u.name, u.induk, u.year')
             ->join('submission s', 's.sub_id = sr.sub_id')
             ->join('users u', 'u.user_id = s.user_id')
@@ -537,18 +540,31 @@ class PengajuanController extends BaseController
             ['reviewer' => $dosenLain['email'] ?? '', 'role' => 'dosen'],
         ];
 
-        foreach ($evaluators as $e) {
-            $responseModel->insert([
-                'sub_id'      => $subId,
-                'quiz_id'     => $questionnaire['quiz_id'],
-                'reviewer'    => $e['reviewer'],
-                'role'        => $e['role'],
-                'status'      => 'pending',
-                'token'       => bin2hex(random_bytes(32)),
+        $created = [];
+            foreach ($evaluators as $e) {
+                $token  = bin2hex(random_bytes(32));
+                $respId = $responseModel->insert([
+                    'sub_id'   => $subId,
+                    'quiz_id'  => $questionnaire['quiz_id'],
+                    'reviewer' => $e['reviewer'],
+                    'role'     => $e['role'],
+                    'status'   => 'pending',
+                    'token'    => $token,
             ]);
+        $created[] = ['resp_id' => $respId, 'token' => $token] + $e;
         }
 
         $submissionModel->update($subId, ['status' => 'pending_reviewed']);
+
+        // Kirim email. Kegagalan tidak membatalkan apa pun; bisa dikirim ulang lewat endpoint resend.
+        $studentName = $userModel->find($submission['user_id'])['name'] ?? 'Mahasiswa';
+        $mailer      = new PvMailer();
+
+        foreach ($created as $c) {
+            if ($mailer->sendEvaluatorLink($c['reviewer'], $c['role'], $studentName, $c['token'])) {
+                $responseModel->update($c['resp_id'], ['email_sent_at' => date('Y-m-d H:i:s')]);
+            }
+        }
     }
 
     private function validateDocumentWithAi(string $modelClass, string $prefix, string $folder, int $subId, string $kategori, string $fileName, string $namaMahasiswa): void
@@ -620,6 +636,41 @@ class PengajuanController extends BaseController
         // 'ragu' -> tetap pending, skor tetap 0, nunggu admin
 
         (new ScoreResultModel())->calculateAllResults($subId);
+    }
+
+    //post /pengajuan/(subId)/resend-pv-emails kalo misal gagal kirim ulang
+    public function resendPvEmails($subId)
+    {
+        $submission = (new SubmissionModel())->find($subId);
+        if (! $submission) {
+            return $this->response->setStatusCode(404)->setJSON([
+                'success' => false,
+                'message' => 'Pengajuan tidak ditemukan.',
+            ]);
+        }
+
+        $responseModel = new PvResponseModel();
+        $targets = $responseModel
+            ->where('sub_id', $subId)
+            ->where('status', 'pending')
+            ->where('email_sent_at IS NULL')
+            ->findAll();
+
+        $studentName = (new UserModel())->find($submission['user_id'])['name'] ?? 'Mahasiswa';
+        $mailer = new PvMailer();
+        $sent = 0;
+
+        foreach ($targets as $t) {
+            if ($mailer->sendEvaluatorLink($t['reviewer'], $t['role'], $studentName, $t['token'])) {
+                $responseModel->update($t['resp_id'], ['email_sent_at' => date('Y-m-d H:i:s')]);
+                $sent++;
+            }
+        }
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => "{$sent} dari " . count($targets) . ' email berhasil dikirim.',
+        ]);
     }
 
 }

@@ -7,6 +7,8 @@ use App\Models\PraditaValueModel;
 use App\Models\PvQuestionModel;
 use App\Models\PvResponseModel;
 use App\Models\ScoreResultModel;
+use App\Models\SubmissionModel;
+use App\Models\UserModel;
 
 class PvResponseController extends BaseController
 {
@@ -34,11 +36,15 @@ class PvResponseController extends BaseController
 
         $questions = (new PvQuestionModel())->where('quiz_id', $response['quiz_id'])->findAll();
 
+        $submission = (new SubmissionModel())->find($response['sub_id']);
+        $mahasiswa  = $submission ? (new UserModel())->find($submission['user_id']) : null;
+
         return $this->response->setJSON([
             'success' => true,
             'data'    => [
                 'role'      => $response['role'],
                 'reviewer'  => $response['reviewer'],
+                'mahasiswa' => $mahasiswa['name'] ?? null,
                 'questions' => $questions,
             ],
         ]);
@@ -74,15 +80,33 @@ class PvResponseController extends BaseController
         $questIds   = array_map('intval', array_column($questions, 'quest_id'));
         $weightById = array_combine($questIds, array_map('intval', array_column($questions, 'weight')));
 
-        if (count($answers) !== count($questIds)) {
+        $answeredIds = array_map(static fn ($a) => (int) ($a['quest_id'] ?? 0), $answers);
+        sort($answeredIds);
+        $expectedIds = $questIds;
+        sort($expectedIds);
+
+        if ($answeredIds !== $expectedIds) {
             return $this->response->setStatusCode(422)->setJSON([
                 'success' => false,
-                'message' => 'Semua pertanyaan wajib dijawab.',
+                'message' => 'Semua pertanyaan wajib dijawab tepat satu kali.',
             ]);
         }
 
         $db = \Config\Database::connect();
         $db->transStart();
+
+        $locked = $db->query(
+            "SELECT resp_id FROM pv_responses WHERE resp_id = ? AND status <> 'submitted' FOR UPDATE",
+            [$response['resp_id']]
+        )->getRowArray();
+
+        if (! $locked) {
+            $db->transRollback();
+            return $this->response->setStatusCode(409)->setJSON([
+                'success' => false,
+                'message' => 'Form ini sudah pernah diisi.',
+            ]);
+        }
 
         $detailModel  = new DetailResponseModel();
         $weightedSum  = 0;
