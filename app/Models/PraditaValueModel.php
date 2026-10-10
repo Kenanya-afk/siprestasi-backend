@@ -8,7 +8,7 @@ class PraditaValueModel extends Model {
     protected $table         = 'pradita_value';
     protected $primaryKey    = 'pv_id';
     protected $allowedFields = [
-        'sub_id', ' pv_score'
+        'sub_id', 'pv_score'
     ];
     
     public function aggregatePvScore(int $subId): ?int
