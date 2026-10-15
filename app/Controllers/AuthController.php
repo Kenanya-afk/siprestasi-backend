@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\UserModel;
+use App\Libraries\OtpService;
 
 class AuthController extends BaseController
 {
@@ -20,6 +21,7 @@ class AuthController extends BaseController
     public function register()
     {
         $rules = [
+            'registration_token' => 'required',
             'email' => [
             'rules'  => 'required|valid_email|is_unique[users.email]|regex_match[/@student\./]',
                 'errors' => [
@@ -58,6 +60,16 @@ class AuthController extends BaseController
             return $this->response->setStatusCode(422)->setJSON([
                 'success' => false,
                 'errors'  => $this->validator->getErrors(),
+            ]);
+        }
+
+        $otp   = new OtpService();
+        $email = OtpService::normalizeEmail((string) $this->request->getPost('email'));
+
+        if (! $otp->validateToken($email, (string) $this->request->getPost('registration_token'))) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'success' => false,
+                'message' => 'Verifikasi email diperlukan atau sudah kedaluwarsa. Silakan verifikasi email lagi.',
             ]);
         }
 
@@ -150,7 +162,7 @@ if (!$hasilAi['is_valid']) {
 
         $data = [
             'name'              => $this->request->getPost('nama'),
-            'email'             => $this->request->getPost('email'),
+            'email'             => $email,
             'password'          => password_hash(
                                     $this->request->getPost('password'),
                                     PASSWORD_BCRYPT
@@ -163,7 +175,14 @@ if (!$hasilAi['is_valid']) {
             'year'              => $angkatan,
 ];
 
-        $this->userModel->insert($data);
+        if (! $this->userModel->insert($data)) {
+        return $this->response->setStatusCode(422)->setJSON([
+            'success' => false,
+            'errors'  => $this->userModel->errors(),
+            ]);
+        }
+
+        $otp->consume($email); // token registrasi sekali pakai
 
         return $this->response->setStatusCode(201)->setJSON([
             'success' => true,
