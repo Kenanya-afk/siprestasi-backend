@@ -2,6 +2,7 @@
 
 use CodeIgniter\Router\RouteCollection;
 
+/** @var RouteCollection $routes */
 $routes->get('/', 'Home::index');
 $routes->post('auth/register', 'AuthController::register');
 $routes->post('auth/login', 'AuthController::login');
@@ -45,3 +46,8 @@ $routes->delete('profile/picture', 'ProfileController::deletePicture', ['filter'
 // Registration OTP
 $routes->post('auth/register/otp', 'RegistrationOtpController::sendOtp');
 $routes->post('auth/register/otp/verify', 'RegistrationOtpController::verifyOtp');
+
+//Lupa Password
+$routes->post('auth/forgot-password', 'ForgotPasswordController::sendOtp');
+$routes->post('auth/forgot-password/verify', 'ForgotPasswordController::verifyOtp');
+$routes->post('auth/forgot-password/reset', 'ForgotPasswordController::reset');
